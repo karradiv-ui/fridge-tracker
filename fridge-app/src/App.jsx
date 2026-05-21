@@ -1,6 +1,5 @@
-import { useState, useRef, useEffect } from "react";
+import { useState } from "react";
 
-/* ── DATA ─────────────────────────────────────────────── */
 const LOCATIONS = [
   { id: "upstairs-fridge",    label: "Upstairs Fridge",    icon: "🧊", accent: "#6EE7F7" },
   { id: "upstairs-freezer",   label: "Upstairs Freezer",   icon: "❄️", accent: "#A5B4FC" },
@@ -35,13 +34,93 @@ const daysLeft = (d) => { if (!d) return 9999; return Math.ceil((new Date(d) - t
 const status = (d) => {
   if (!d) return null;
   const n = daysLeft(d);
-  if (n < 0)  return { text:"Expired",    chip:"#FF4D4D", dark:true };
-  if (n <= 3) return { text:`${n}d left`, chip:"#FF8C42", dark:true };
-  if (n <= 7) return { text:`${n}d left`, chip:"#FFD166", dark:false };
+  if (n < 0)  return { text:"Expired",    chip:"#FF4D4D" };
+  if (n <= 3) return { text:`${n}d left`, chip:"#FF8C42" };
+  if (n <= 7) return { text:`${n}d left`, chip:"#FFD166" };
   return null;
 };
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "—";
 const BLANK = { name:"", qty:1, unit:"units", cat:"meat", loc:"upstairs-fridge", bought:new Date().toISOString().split("T")[0], expires:"", notes:"" };
+
+/* ── SMART TEXT PARSER (free, no API) ───────────────────
+   Parses natural text like:
+   "2 bottles of milk upstairs fridge expires June 10"
+   "chicken breast 1.5kg downstairs freezer"
+   "3 yogurts dairy fridge"
+*/
+const parseMonths = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11,
+  january:0,february:1,march:2,april:3,june:5,july:6,august:7,september:8,october:9,november:10,december:11 };
+
+const smartParse = (text) => {
+  const t = text.toLowerCase().trim();
+  const result = { ...BLANK, name: "" };
+
+  // qty + unit  e.g. "2 bottles", "1.5kg", "3 bags"
+  const qtyUnit = t.match(/(\d+\.?\d*)\s*(kg|g|lbs?|oz|liters?|ml|bottles?|cans?|bags?|boxes?|packs?|slices?|units?)/);
+  if (qtyUnit) { result.qty = parseFloat(qtyUnit[1]); result.unit = qtyUnit[2].replace(/s$/,"")+"s"; }
+  const qtyOnly = t.match(/^(\d+\.?\d*)\s/);
+  if (!qtyUnit && qtyOnly) result.qty = parseFloat(qtyOnly[1]);
+
+  // location
+  if (t.includes("upstairs") && t.includes("freez")) result.loc = "upstairs-freezer";
+  else if (t.includes("downstairs") && t.includes("freez")) result.loc = "downstairs-freezer";
+  else if (t.includes("upstairs")) result.loc = "upstairs-fridge";
+  else if (t.includes("downstairs")) result.loc = "downstairs-fridge";
+  else if (t.includes("freez")) result.loc = "upstairs-freezer";
+
+  // category keywords
+  const catMap = {
+    meat:["meat","chicken","beef","lamb","turkey","brisket","steak","veal","duck","sausage","mince","ground"],
+    dairy:["milk","cheese","yogurt","yoghurt","butter","cream","sour cream","cottage","dairy"],
+    pareve:["fish","salmon","tuna","egg","eggs","pareve","vegetable","fruit","produce","tofu"],
+    frozen:["frozen","freeze","ice cream","peas","corn","pizza"],
+    beverages:["juice","soda","water","drink","beverage","cola","wine","beer","tea","coffee"],
+    condiments:["sauce","ketchup","mustard","mayo","dressing","oil","vinegar","jam","honey","condiment"],
+    bread:["bread","challah","roll","cake","cookie","pastry","muffin","bagel","pita","baked"],
+  };
+  for (const [cat, words] of Object.entries(catMap)) {
+    if (words.some(w => t.includes(w))) { result.cat = cat; break; }
+  }
+
+  // expiry date  e.g. "expires june 10", "exp 10/6", "best before 15 july"
+  const expKeyword = t.match(/(?:exp(?:ires?)?|best before|use by|bb)\s+(.+)/);
+  if (expKeyword) {
+    const datePart = expKeyword[1];
+    // "june 10" or "10 june"
+    const monthDay = datePart.match(/([a-z]+)\s+(\d{1,2})/);
+    const dayMonth = datePart.match(/(\d{1,2})\s+([a-z]+)/);
+    const slashDate = datePart.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+    const yr = new Date().getFullYear();
+    if (monthDay && parseMonths[monthDay[1]] !== undefined) {
+      const d = new Date(yr, parseMonths[monthDay[1]], parseInt(monthDay[2]));
+      if (d < today) d.setFullYear(yr + 1);
+      result.expires = d.toISOString().split("T")[0];
+    } else if (dayMonth && parseMonths[dayMonth[2]] !== undefined) {
+      const d = new Date(yr, parseMonths[dayMonth[2]], parseInt(dayMonth[1]));
+      if (d < today) d.setFullYear(yr + 1);
+      result.expires = d.toISOString().split("T")[0];
+    } else if (slashDate) {
+      const m = parseInt(slashDate[1])-1, day = parseInt(slashDate[2]);
+      const d = new Date(yr, m, day);
+      if (d < today) d.setFullYear(yr + 1);
+      result.expires = d.toISOString().split("T")[0];
+    }
+  }
+
+  // name: strip known keywords to get the item name
+  let name = t
+    .replace(/(\d+\.?\d*)\s*(kg|g|lbs?|oz|liters?|ml|bottles?|cans?|bags?|boxes?|packs?|slices?|units?)/g, "")
+    .replace(/(\d+\.?\d*)/g, "")
+    .replace(/upstairs|downstairs|fridge|freezer|frozen/g, "")
+    .replace(/(?:exp(?:ires?)?|best before|use by|bb)\s+\S+(\s+\S+)?/g, "")
+    .replace(/\b(of|in|the|to|for|from|some|a|an)\b/g, "")
+    .replace(/\s+/g, " ").trim();
+
+  // capitalize first letter of each word
+  result.name = name.replace(/\b\w/g, c => c.toUpperCase());
+
+  return result;
+};
 
 export default function App() {
   const [items, setItemsRaw] = useState(load);
@@ -51,13 +130,10 @@ export default function App() {
   const [q, setQ]            = useState("");
   const [editing, setEditing]= useState(null);
   const [form, setForm]      = useState(BLANK);
-  const [mic, setMic]        = useState(false);
-  const [said, setSaid]      = useState("");
-  const [reply, setReply]    = useState("");
-  const [aiOn, setAiOn]      = useState(false);
+  const [quickText, setQuickText] = useState("");
+  const [preview, setPreview]    = useState(null);
   const [toast, setToast]    = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
-  const recRef = useRef(null);
 
   const setItems = fn => setItemsRaw(p => { const n = typeof fn==="function"?fn(p):fn; save(n); return n; });
   const pop = (msg, err=false) => { setToast({msg,err}); setTimeout(()=>setToast(null),3000); };
@@ -84,6 +160,21 @@ export default function App() {
     }
     setForm(BLANK); setEditing(null); setTab("inventory");
   };
+
+  const handleQuickPreview = () => {
+    if (!quickText.trim()) return;
+    const parsed = smartParse(quickText);
+    setPreview(parsed);
+  };
+
+  const confirmQuickAdd = () => {
+    if (!preview) return;
+    if (!preview.name.trim()) { pop("Couldn't detect item name — try being more specific", true); return; }
+    setItems(p=>[...p,{...preview,id:Date.now()}]);
+    pop(`"${preview.name}" added!`);
+    setQuickText(""); setPreview(null);
+  };
+
   const remove = id => { const i=items.find(x=>x.id===id); setItems(p=>p.filter(x=>x.id!==id)); setConfirmDel(null); pop(`"${i?.name}" removed`); };
   const use1   = id => {
     const i=items.find(x=>x.id===id);
@@ -92,54 +183,13 @@ export default function App() {
   };
   const edit = i => { setForm({...i}); setEditing(i); setTab("add"); };
 
-  const startMic = () => {
-    const SR = window.SpeechRecognition||window.webkitSpeechRecognition;
-    if (!SR) { pop("Voice not supported here",true); return; }
-    const r = new SR(); r.lang="en-US"; r.continuous=false; r.interimResults=false;
-    r.onresult = e => { const t=e.results[0][0].transcript; setSaid(t); runVoice(t); };
-    r.onerror  = ()=>{ setMic(false); pop("Mic error, try again",true); };
-    r.onend    = ()=>setMic(false);
-    r.start(); recRef.current=r; setMic(true);
-  };
-
-  const runVoice = async (text) => {
-    setAiOn(true); setReply("");
-    try {
-      const inv = items.map(i=>`${i.name}(qty:${i.qty}${i.unit},loc:${LOCATIONS.find(l=>l.id===i.loc)?.label},cat:${i.cat},exp:${fmtDate(i.expires)})`).join(", ");
-      const res = await fetch("https://api.anthropic.com/v1/messages",{
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:800,
-          system:`Kitchen assistant for a fully kosher home. Two fridges + two freezers. Never ask about kosher status.
-Inventory: ${inv}
-Today: ${new Date().toLocaleDateString("en-GB")}
-Locations: upstairs-fridge, upstairs-freezer, downstairs-fridge, downstairs-freezer
-Categories: meat,dairy,pareve,frozen,beverages,condiments,bread,other
-Respond ONLY as JSON (no markdown): {"action":"add"|"query","message":"short friendly reply","item":{"name":"","qty":1,"unit":"units","cat":"meat","loc":"upstairs-fridge","expires":"YYYY-MM-DD or null","notes":""}}
-Only include item for add action.`,
-          messages:[{role:"user",content:text}]
-        })
-      });
-      const data = await res.json();
-      const raw = data.content?.find(b=>b.type==="text")?.text||"{}";
-      let p; try { p=JSON.parse(raw.replace(/```json|```/g,"").trim()); } catch { p={action:"query",message:raw}; }
-      setReply(p.message||"Got it!");
-      if (p.action==="add"&&p.item) {
-        const ni={id:Date.now(),bought:new Date().toISOString().split("T")[0],notes:"",...p.item};
-        setItems(prev=>[...prev,ni]); pop(`Added "${ni.name}" via voice!`);
-      }
-    } catch { setReply("Sorry, something went wrong."); }
-    setAiOn(false);
-  };
-
   const getCat = id => CATEGORIES.find(c=>c.id===id)||CATEGORIES[7];
   const getLoc = id => LOCATIONS.find(l=>l.id===id)||LOCATIONS[0];
 
-  /* ── STYLES ─────────────────────────────────────────── */
   return (
     <div style={{fontFamily:"'DM Sans','Outfit',system-ui,sans-serif",minHeight:"100vh",background:"#0A0A0F",color:"#F0F0FF"}}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&family=Cormorant+Garamond:wght@300;400;500&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
         ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2a2a3a;border-radius:2px}
         .btn{cursor:pointer;border:none;font-family:'DM Sans',sans-serif;transition:all .15s ease;outline:none}
@@ -147,11 +197,9 @@ Only include item for add action.`,
         .card{background:#13131F;border:1px solid #1E1E30;border-radius:20px}
         .pill{border-radius:100px}
         input,select,textarea{font-family:'DM Sans',sans-serif;background:#0E0E1A;border:1px solid #1E1E30;color:#F0F0FF;border-radius:12px;outline:none;transition:border .15s}
-        input:focus,select:focus{border-color:#7C6AF7}
+        input:focus,select:focus,textarea:focus{border-color:#7C6AF7}
         @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
         .fu{animation:fadeUp .22s ease forwards}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-        .pulse{animation:pulse 1.2s infinite}
         @keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
         .toast{animation:toastIn .2s ease}
         .hov:hover{background:#1A1A2E !important}
@@ -184,11 +232,11 @@ Only include item for add action.`,
       )}
 
       {/* HEADER */}
-      <div style={{background:"#0A0A0F",borderBottom:"1px solid #1A1A2E",padding:"16px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100,backdropFilter:"blur(20px)"}}>
+      <div style={{background:"#0A0A0F",borderBottom:"1px solid #1A1A2E",padding:"16px 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:100}}>
         <div style={{display:"flex",alignItems:"center",gap:12}}>
           <div style={{width:36,height:36,borderRadius:10,background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>🏠</div>
           <div>
-            <div style={{fontSize:16,fontWeight:700,letterSpacing:"-.3px",color:"#F0F0FF"}}>FridgeTrack</div>
+            <div style={{fontSize:20,fontWeight:400,letterSpacing:"3px",fontFamily:"'Cormorant Garamond',Georgia,serif",color:"#C8B8FF",textTransform:"uppercase"}}>Irina's Fridge</div>
             <div style={{fontSize:11,color:"#404060",fontFamily:"'DM Mono',monospace"}}>{items.length} items · all kosher</div>
           </div>
         </div>
@@ -216,24 +264,65 @@ Only include item for add action.`,
         {/* ── HOME ── */}
         {tab==="home"&&(
           <div className="fu">
-            {/* Voice */}
+
+            {/* Quick Add Box */}
             <div style={{background:"linear-gradient(135deg,#13131F,#1A1030)",border:"1px solid #2A1A4A",borderRadius:24,padding:24,marginBottom:20}}>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
-                <div style={{width:44,height:44,borderRadius:14,background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🎙</div>
+                <div style={{width:44,height:44,borderRadius:14,background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>✨</div>
                 <div>
-                  <div style={{fontSize:16,fontWeight:700}}>Voice Assistant</div>
-                  <div style={{fontSize:12,color:"#4040A0"}}>Speak to add or check items</div>
+                  <div style={{fontSize:16,fontWeight:700}}>Quick Add</div>
+                  <div style={{fontSize:12,color:"#4040A0"}}>Type naturally — it figures out the rest</div>
                 </div>
               </div>
-              <button className="btn" onClick={startMic} disabled={mic||aiOn} style={{width:"100%",padding:"14px",borderRadius:16,background:mic?"#FF4D4D22":aiOn?"#1A1A2E":"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:mic?"#FF4D4D":aiOn?"#4040A0":"white",fontSize:14,fontWeight:600,border:mic?"1px solid #FF4D4D44":"none",boxShadow:(!mic&&!aiOn)?"0 4px 20px #7C6AF750":"none",transition:"all .2s"}}>
-                <span className={mic?"pulse":""}>{mic?"● Listening…":aiOn?"Processing…":"Tap to Speak"}</span>
-              </button>
-              {said&&<div style={{marginTop:12,padding:"10px 14px",background:"#FFFFFF08",borderRadius:12,fontSize:13,color:"#8080C0",fontStyle:"italic"}}>"{said}"</div>}
-              {reply&&<div style={{marginTop:8,padding:"10px 14px",background:"#7C6AF710",borderRadius:12,fontSize:13,color:"#A090FF",borderLeft:"2px solid #7C6AF7"}}>🤖 {reply}</div>}
-              <div style={{marginTop:10,fontSize:11,color:"#2A2A50",textAlign:"center"}}>Try: "Add 2 bottles of milk to upstairs fridge, expires June 10"</div>
+
+              <div style={{display:"flex",gap:8,marginBottom:10}}>
+                <input
+                  value={quickText}
+                  onChange={e=>{setQuickText(e.target.value); setPreview(null);}}
+                  onKeyDown={e=>e.key==="Enter"&&handleQuickPreview()}
+                  placeholder='e.g. "2 bottles milk upstairs fridge expires June 20"'
+                  style={{flex:1,padding:"12px 14px",fontSize:14,borderRadius:12}}
+                />
+                <button className="btn pill" onClick={handleQuickPreview} style={{padding:"12px 18px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:14,fontWeight:600,whiteSpace:"nowrap",boxShadow:"0 4px 20px #7C6AF740"}}>
+                  Parse →
+                </button>
+              </div>
+
+              {/* Preview card */}
+              {preview && (
+                <div style={{background:"#0E0E1A",borderRadius:14,padding:16,marginTop:4,border:"1px solid #2A2A4A"}}>
+                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"1px",color:"#4040A0",textTransform:"uppercase",marginBottom:10}}>Detected — does this look right?</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                    {[
+                      {l:"Name",    v:preview.name||"—"},
+                      {l:"Qty",     v:`${preview.qty} ${preview.unit}`},
+                      {l:"Location",v:getLoc(preview.loc).label},
+                      {l:"Category",v:getCat(preview.cat).label+" "+getCat(preview.cat).icon},
+                      {l:"Expires", v:preview.expires?fmtDate(preview.expires):"Not set"},
+                    ].map(r=>(
+                      <div key={r.l}>
+                        <div style={{fontSize:10,color:"#3A3A60",fontWeight:600,textTransform:"uppercase",letterSpacing:".8px"}}>{r.l}</div>
+                        <div style={{fontSize:14,color:"#C0C0FF",fontWeight:500,marginTop:2}}>{r.v}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{display:"flex",gap:8}}>
+                    <button className="btn pill" onClick={()=>{setForm({...preview});setEditing(null);setPreview(null);setQuickText("");setTab("add");}} style={{flex:1,padding:"10px",background:"#1A1A2E",color:"#7C6AF7",border:"1px solid #2A2A5A",fontSize:13,fontWeight:600}}>
+                      ✏️ Edit first
+                    </button>
+                    <button className="btn pill" onClick={confirmQuickAdd} style={{flex:2,padding:"10px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:13,fontWeight:700,boxShadow:"0 4px 16px #7C6AF740"}}>
+                      ✓ Add to Inventory
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div style={{marginTop:12,fontSize:11,color:"#2A2A50",lineHeight:1.6}}>
+                💡 Tips: include quantity · location (upstairs/downstairs fridge or freezer) · expiry date
+              </div>
             </div>
 
-            {/* Stats row */}
+            {/* Stats */}
             <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12,marginBottom:20}}>
               {[{l:"Total",v:items.length,c:"#7C6AF7",ic:"📦"},{l:"Expiring",v:soon.length,c:"#FFD166",ic:"⏰"},{l:"Expired",v:expired.length,c:"#FF4D4D",ic:"🚨"}].map(s=>(
                 <div key={s.l} className="card" style={{padding:"16px 12px",textAlign:"center"}}>
@@ -305,7 +394,6 @@ Only include item for add action.`,
               <div className="card" style={{padding:40,textAlign:"center",color:"#3A3A60"}}>
                 <div style={{fontSize:36,marginBottom:8}}>🔍</div>
                 <div style={{fontWeight:600}}>No items found</div>
-                <div style={{fontSize:13,marginTop:4}}>Adjust filters or add a new item</div>
               </div>
             ):(
               <div style={{display:"flex",flexDirection:"column",gap:8}}>
@@ -451,7 +539,7 @@ Only include item for add action.`,
                 </div>
                 <div>
                   <label style={{fontSize:11,fontWeight:700,letterSpacing:"1px",color:"#3A3A70",textTransform:"uppercase",display:"block",marginBottom:6}}>Notes</label>
-                  <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="e.g. For Shabbat, vacuum sealed, opened…" style={{width:"100%",padding:"11px 14px",fontSize:14}} />
+                  <input value={form.notes} onChange={e=>setForm(p=>({...p,notes:e.target.value}))} placeholder="e.g. For Shabbat, vacuum sealed…" style={{width:"100%",padding:"11px 14px",fontSize:14}} />
                 </div>
                 <div style={{display:"flex",gap:10,marginTop:4}}>
                   <button className="btn pill" onClick={()=>{setTab("inventory");setEditing(null);}} style={{flex:1,padding:"13px",background:"#1A1A2E",color:"#4040A0",fontSize:14,fontWeight:600}}>Cancel</button>
