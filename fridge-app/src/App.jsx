@@ -5,7 +5,9 @@ const LOCATIONS = [
   { id: "upstairs-freezer",   label: "Upstairs Freezer",   icon: "❄️", accent: "#A5B4FC" },
   { id: "downstairs-fridge",  label: "Downstairs Fridge",  icon: "🧊", accent: "#6EE7B7" },
   { id: "downstairs-freezer", label: "Downstairs Freezer", icon: "❄️", accent: "#FCA5A5" },
+  { id: "pantry",             label: "Pantry",             icon: "🗄️", accent: "#FCD34D" },
 ];
+
 const CATEGORIES = [
   { id: "meat",       label: "Meat",          icon: "🥩" },
   { id: "dairy",      label: "Dairy",         icon: "🥛" },
@@ -14,19 +16,24 @@ const CATEGORIES = [
   { id: "beverages",  label: "Beverages",     icon: "🥤" },
   { id: "condiments", label: "Condiments",    icon: "🫙" },
   { id: "bread",      label: "Bread & Baked", icon: "🍞" },
+  { id: "spices",     label: "Spices",        icon: "🧂" },
+  { id: "snacks",     label: "Snacks",        icon: "🍿" },
+  { id: "pantry",     label: "Pantry",        icon: "🥫" },
   { id: "other",      label: "Other",         icon: "📦" },
 ];
-const UNITS = ["units","kg","g","lbs","oz","liters","ml","bottles","cans","bags","boxes","packs","slices"];
+
+const UNITS = ["units","kg","g","lbs","oz","liters","ml","bottles","cans","bags","boxes","packs","slices","jars","bunches"];
 const SAMPLE = [
   { id:1, name:"Whole Milk",      qty:2,   unit:"bottles", cat:"dairy",     loc:"upstairs-fridge",    bought:"2026-05-15", expires:"2026-06-10", notes:"" },
   { id:2, name:"Chicken Breasts", qty:1.5, unit:"kg",      cat:"meat",      loc:"downstairs-freezer", bought:"2026-05-10", expires:"2026-08-10", notes:"Vacuum sealed" },
   { id:3, name:"Greek Yogurt",    qty:3,   unit:"units",   cat:"dairy",     loc:"upstairs-fridge",    bought:"2026-05-18", expires:"2026-06-05", notes:"" },
   { id:4, name:"Frozen Peas",     qty:2,   unit:"bags",    cat:"frozen",    loc:"upstairs-freezer",   bought:"2026-04-20", expires:"2027-04-20", notes:"" },
   { id:5, name:"Brisket",         qty:2,   unit:"kg",      cat:"meat",      loc:"downstairs-freezer", bought:"2026-05-01", expires:"2026-08-01", notes:"For Shabbat" },
-  { id:6, name:"Orange Juice",    qty:1,   unit:"bottles", cat:"beverages", loc:"downstairs-fridge",  bought:"2026-05-19", expires:"2026-06-02", notes:"" },
+  { id:6, name:"Paprika",         qty:1,   unit:"jars",    cat:"spices",    loc:"pantry",             bought:"2026-05-01", expires:"2027-05-01", notes:"" },
   { id:7, name:"Challah",         qty:1,   unit:"units",   cat:"bread",     loc:"upstairs-fridge",    bought:"2026-05-20", expires:"2026-05-27", notes:"Homemade" },
 ];
-const KEY = "fridgeTracker_v2";
+
+const KEY = "fridgeTracker_v3";
 const load = () => { try { const s = localStorage.getItem(KEY); if (s) return JSON.parse(s); } catch {} return SAMPLE; };
 const save = (d) => { try { localStorage.setItem(KEY, JSON.stringify(d)); } catch {} };
 const today = new Date();
@@ -42,84 +49,84 @@ const status = (d) => {
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"}) : "—";
 const BLANK = { name:"", qty:1, unit:"units", cat:"meat", loc:"upstairs-fridge", bought:new Date().toISOString().split("T")[0], expires:"", notes:"" };
 
-/* ── SMART TEXT PARSER (free, no API) ───────────────────
-   Parses natural text like:
-   "2 bottles of milk upstairs fridge expires June 10"
-   "chicken breast 1.5kg downstairs freezer"
-   "3 yogurts dairy fridge"
-*/
 const parseMonths = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11,
   january:0,february:1,march:2,april:3,june:5,july:6,august:7,september:8,october:9,november:10,december:11 };
 
+const parseExpiry = (t) => {
+  const expKeyword = t.match(/(?:exp(?:ires?)?|best before|use by|bb)\s+(.+)/);
+  if (!expKeyword) return "";
+  const datePart = expKeyword[1];
+  const monthDay  = datePart.match(/([a-z]+)\s+(\d{1,2})/);
+  const dayMonth  = datePart.match(/(\d{1,2})\s+([a-z]+)/);
+  const slashDate = datePart.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
+  const yr = new Date().getFullYear();
+  if (monthDay && parseMonths[monthDay[1]] !== undefined) {
+    const d = new Date(yr, parseMonths[monthDay[1]], parseInt(monthDay[2]));
+    if (d < today) d.setFullYear(yr + 1);
+    return d.toISOString().split("T")[0];
+  } else if (dayMonth && parseMonths[dayMonth[2]] !== undefined) {
+    const d = new Date(yr, parseMonths[dayMonth[2]], parseInt(dayMonth[1]));
+    if (d < today) d.setFullYear(yr + 1);
+    return d.toISOString().split("T")[0];
+  } else if (slashDate) {
+    const d = new Date(yr, parseInt(slashDate[1])-1, parseInt(slashDate[2]));
+    if (d < today) d.setFullYear(yr + 1);
+    return d.toISOString().split("T")[0];
+  }
+  return "";
+};
+
+const catMap = {
+  meat:["meat","chicken","beef","lamb","turkey","brisket","steak","veal","duck","sausage","mince","ground","schnitzel","chop"],
+  dairy:["milk","cheese","yogurt","yoghurt","butter","cream","sour cream","cottage","dairy","labneh"],
+  pareve:["fish","salmon","tuna","egg","eggs","pareve","vegetable","fruit","produce","tofu","hummus"],
+  frozen:["frozen","freeze","ice cream","peas","corn","pizza","sorbet"],
+  beverages:["juice","soda","water","drink","beverage","cola","wine","beer","tea","coffee","kombucha"],
+  condiments:["sauce","ketchup","mustard","mayo","dressing","oil","vinegar","jam","honey","condiment","tahini","syrup"],
+  bread:["bread","challah","roll","cake","cookie","pastry","muffin","bagel","pita","baked","crackers"],
+  spices:["spice","spices","salt","pepper","paprika","cumin","turmeric","oregano","cinnamon","garlic powder","onion powder","basil","thyme","rosemary","chili","cayenne","bay leaf","cardamom","sumac","zaatar"],
+  snacks:["snack","chips","popcorn","pretzel","nuts","almonds","cashews","peanuts","granola","chocolate","candy","biscuit","wafer","dried fruit"],
+  pantry:["pasta","rice","flour","sugar","lentils","chickpeas","beans","oats","cereal","quinoa","couscous","noodles","soup","stock","tomato","canned","tinned","pantry"],
+};
+
 const smartParse = (text) => {
   const t = text.toLowerCase().trim();
-  const result = { ...BLANK, name: "" };
+  const result = { ...BLANK, name: "", expires: "" };
 
-  // qty + unit  e.g. "2 bottles", "1.5kg", "3 bags"
-  const qtyUnit = t.match(/(\d+\.?\d*)\s*(kg|g|lbs?|oz|liters?|ml|bottles?|cans?|bags?|boxes?|packs?|slices?|units?)/);
+  const qtyUnit = t.match(/(\d+\.?\d*)\s*(kg|g|lbs?|oz|liters?|ml|bottles?|cans?|bags?|boxes?|packs?|slices?|units?|jars?|bunches?)/);
   if (qtyUnit) { result.qty = parseFloat(qtyUnit[1]); result.unit = qtyUnit[2].replace(/s$/,"")+"s"; }
-  const qtyOnly = t.match(/^(\d+\.?\d*)\s/);
-  if (!qtyUnit && qtyOnly) result.qty = parseFloat(qtyOnly[1]);
+  else { const qtyOnly = t.match(/^(\d+\.?\d*)\s/); if (qtyOnly) result.qty = parseFloat(qtyOnly[1]); }
 
-  // location
-  if (t.includes("upstairs") && t.includes("freez")) result.loc = "upstairs-freezer";
+  if (t.includes("pantry"))                              result.loc = "pantry";
+  else if (t.includes("upstairs") && t.includes("freez")) result.loc = "upstairs-freezer";
   else if (t.includes("downstairs") && t.includes("freez")) result.loc = "downstairs-freezer";
-  else if (t.includes("upstairs")) result.loc = "upstairs-fridge";
-  else if (t.includes("downstairs")) result.loc = "downstairs-fridge";
-  else if (t.includes("freez")) result.loc = "upstairs-freezer";
+  else if (t.includes("upstairs"))                       result.loc = "upstairs-fridge";
+  else if (t.includes("downstairs"))                     result.loc = "downstairs-fridge";
+  else if (t.includes("freez"))                          result.loc = "upstairs-freezer";
 
-  // category keywords
-  const catMap = {
-    meat:["meat","chicken","beef","lamb","turkey","brisket","steak","veal","duck","sausage","mince","ground"],
-    dairy:["milk","cheese","yogurt","yoghurt","butter","cream","sour cream","cottage","dairy"],
-    pareve:["fish","salmon","tuna","egg","eggs","pareve","vegetable","fruit","produce","tofu"],
-    frozen:["frozen","freeze","ice cream","peas","corn","pizza"],
-    beverages:["juice","soda","water","drink","beverage","cola","wine","beer","tea","coffee"],
-    condiments:["sauce","ketchup","mustard","mayo","dressing","oil","vinegar","jam","honey","condiment"],
-    bread:["bread","challah","roll","cake","cookie","pastry","muffin","bagel","pita","baked"],
-  };
   for (const [cat, words] of Object.entries(catMap)) {
     if (words.some(w => t.includes(w))) { result.cat = cat; break; }
   }
 
-  // expiry date  e.g. "expires june 10", "exp 10/6", "best before 15 july"
-  const expKeyword = t.match(/(?:exp(?:ires?)?|best before|use by|bb)\s+(.+)/);
-  if (expKeyword) {
-    const datePart = expKeyword[1];
-    // "june 10" or "10 june"
-    const monthDay = datePart.match(/([a-z]+)\s+(\d{1,2})/);
-    const dayMonth = datePart.match(/(\d{1,2})\s+([a-z]+)/);
-    const slashDate = datePart.match(/(\d{1,2})[\/\-](\d{1,2})(?:[\/\-](\d{2,4}))?/);
-    const yr = new Date().getFullYear();
-    if (monthDay && parseMonths[monthDay[1]] !== undefined) {
-      const d = new Date(yr, parseMonths[monthDay[1]], parseInt(monthDay[2]));
-      if (d < today) d.setFullYear(yr + 1);
-      result.expires = d.toISOString().split("T")[0];
-    } else if (dayMonth && parseMonths[dayMonth[2]] !== undefined) {
-      const d = new Date(yr, parseMonths[dayMonth[2]], parseInt(dayMonth[1]));
-      if (d < today) d.setFullYear(yr + 1);
-      result.expires = d.toISOString().split("T")[0];
-    } else if (slashDate) {
-      const m = parseInt(slashDate[1])-1, day = parseInt(slashDate[2]);
-      const d = new Date(yr, m, day);
-      if (d < today) d.setFullYear(yr + 1);
-      result.expires = d.toISOString().split("T")[0];
-    }
-  }
+  result.expires = parseExpiry(t);
 
-  // name: strip known keywords to get the item name
   let name = t
-    .replace(/(\d+\.?\d*)\s*(kg|g|lbs?|oz|liters?|ml|bottles?|cans?|bags?|boxes?|packs?|slices?|units?)/g, "")
+    .replace(/(\d+\.?\d*)\s*(kg|g|lbs?|oz|liters?|ml|bottles?|cans?|bags?|boxes?|packs?|slices?|units?|jars?|bunches?)/g, "")
     .replace(/(\d+\.?\d*)/g, "")
-    .replace(/upstairs|downstairs|fridge|freezer|frozen/g, "")
+    .replace(/upstairs|downstairs|fridge|freezer|pantry/g, "")
     .replace(/(?:exp(?:ires?)?|best before|use by|bb)\s+\S+(\s+\S+)?/g, "")
     .replace(/\b(of|in|the|to|for|from|some|a|an)\b/g, "")
     .replace(/\s+/g, " ").trim();
-
-  // capitalize first letter of each word
   result.name = name.replace(/\b\w/g, c => c.toUpperCase());
-
   return result;
+};
+
+// Split a multi-item string by commas, "and", newlines, semicolons
+const splitItems = (text) => {
+  return text
+    .split(/,|\n|;| and | \+ /)
+    .map(s => s.trim())
+    .filter(s => s.length > 1);
 };
 
 export default function App() {
@@ -130,13 +137,13 @@ export default function App() {
   const [q, setQ]            = useState("");
   const [editing, setEditing]= useState(null);
   const [form, setForm]      = useState(BLANK);
-  const [quickText, setQuickText] = useState("");
-  const [preview, setPreview]    = useState(null);
+  const [quickText, setQuickText]   = useState("");
+  const [previews, setPreviews]     = useState([]);
   const [toast, setToast]    = useState(null);
   const [confirmDel, setConfirmDel] = useState(null);
 
   const setItems = fn => setItemsRaw(p => { const n = typeof fn==="function"?fn(p):fn; save(n); return n; });
-  const pop = (msg, err=false) => { setToast({msg,err}); setTimeout(()=>setToast(null),3000); };
+  const pop = (msg, err=false) => { setToast({msg,err}); setTimeout(()=>setToast(null),3500); };
 
   const alerts  = items.filter(i=>i.expires&&daysLeft(i.expires)<=7).sort((a,b)=>daysLeft(a.expires)-daysLeft(b.expires));
   const expired = items.filter(i=>i.expires&&daysLeft(i.expires)<0);
@@ -163,27 +170,34 @@ export default function App() {
 
   const handleQuickPreview = () => {
     if (!quickText.trim()) return;
-    const parsed = smartParse(quickText);
-    setPreview(parsed);
+    const parts = splitItems(quickText);
+    const parsed = parts.map(p => smartParse(p));
+    setPreviews(parsed);
+  };
+
+  const updatePreview = (idx, field, val) => {
+    setPreviews(p => p.map((item, i) => i===idx ? {...item, [field]: val} : item));
   };
 
   const confirmQuickAdd = () => {
-    if (!preview) return;
-    if (!preview.name.trim()) { pop("Couldn't detect item name — try being more specific", true); return; }
-    setItems(p=>[...p,{...preview,id:Date.now()}]);
-    pop(`"${preview.name}" added!`);
-    setQuickText(""); setPreview(null);
+    if (!previews.length) return;
+    const valid = previews.filter(p => p.name.trim());
+    if (!valid.length) { pop("Couldn't detect any item names — try being more specific", true); return; }
+    const newItems = valid.map(p => ({...p, id: Date.now() + Math.random()}));
+    setItems(prev => [...prev, ...newItems]);
+    pop(`${valid.length} item${valid.length>1?"s":""} added!`);
+    setQuickText(""); setPreviews([]);
   };
 
   const remove = id => { const i=items.find(x=>x.id===id); setItems(p=>p.filter(x=>x.id!==id)); setConfirmDel(null); pop(`"${i?.name}" removed`); };
-  const use1   = id => {
+  const use1 = id => {
     const i=items.find(x=>x.id===id);
     if (i.qty<=1) { setItems(p=>p.filter(x=>x.id!==id)); pop(`"${i.name}" finished`); }
     else { setItems(p=>p.map(x=>x.id===id?{...x,qty:Math.round((x.qty-1)*10)/10}:x)); pop(`"${i.name}" −1`); }
   };
   const edit = i => { setForm({...i}); setEditing(i); setTab("add"); };
 
-  const getCat = id => CATEGORIES.find(c=>c.id===id)||CATEGORIES[7];
+  const getCat = id => CATEGORIES.find(c=>c.id===id)||CATEGORIES[10];
   const getLoc = id => LOCATIONS.find(l=>l.id===id)||LOCATIONS[0];
 
   return (
@@ -209,14 +223,12 @@ export default function App() {
         select option{background:#13131F}
       `}</style>
 
-      {/* TOAST */}
       {toast && (
         <div className="toast" style={{position:"fixed",top:20,right:20,zIndex:9999,background:toast.err?"#FF4D4D":"#7C6AF7",color:"white",padding:"10px 18px",borderRadius:12,fontSize:13,fontWeight:500,boxShadow:"0 8px 30px rgba(0,0,0,.4)"}}>
           {toast.err?"⚠️":"✓"} {toast.msg}
         </div>
       )}
 
-      {/* DELETE MODAL */}
       {confirmDel && (
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:999,display:"flex",alignItems:"center",justifyContent:"center",padding:"0 20px"}}>
           <div className="card fu" style={{padding:28,maxWidth:320,width:"100%",textAlign:"center"}}>
@@ -242,13 +254,9 @@ export default function App() {
         </div>
         <div style={{display:"flex",gap:8,alignItems:"center"}}>
           {alerts.length>0&&(
-            <button className="btn pill" onClick={()=>setTab("alerts")} style={{padding:"6px 12px",background:"#FF4D4D18",color:"#FF4D4D",border:"1px solid #FF4D4D33",fontSize:12,fontWeight:600}}>
-              ⚠ {alerts.length}
-            </button>
+            <button className="btn pill" onClick={()=>setTab("alerts")} style={{padding:"6px 12px",background:"#FF4D4D18",color:"#FF4D4D",border:"1px solid #FF4D4D33",fontSize:12,fontWeight:600}}>⚠ {alerts.length}</button>
           )}
-          <button className="btn pill" onClick={()=>{setEditing(null);setForm(BLANK);setTab("add");}} style={{padding:"8px 16px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:13,fontWeight:600,boxShadow:"0 4px 20px #7C6AF740"}}>
-            + Add
-          </button>
+          <button className="btn pill" onClick={()=>{setEditing(null);setForm(BLANK);setTab("add");}} style={{padding:"8px 16px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:13,fontWeight:600,boxShadow:"0 4px 20px #7C6AF740"}}>+ Add</button>
         </div>
       </div>
 
@@ -264,61 +272,67 @@ export default function App() {
         {/* ── HOME ── */}
         {tab==="home"&&(
           <div className="fu">
-
-            {/* Quick Add Box */}
+            {/* Quick Add */}
             <div style={{background:"linear-gradient(135deg,#13131F,#1A1030)",border:"1px solid #2A1A4A",borderRadius:24,padding:24,marginBottom:20}}>
               <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:16}}>
                 <div style={{width:44,height:44,borderRadius:14,background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>✨</div>
                 <div>
                   <div style={{fontSize:16,fontWeight:700}}>Quick Add</div>
-                  <div style={{fontSize:12,color:"#4040A0"}}>Type naturally — it figures out the rest</div>
+                  <div style={{fontSize:12,color:"#4040A0"}}>Type one item or a list — it figures out the rest</div>
                 </div>
               </div>
 
-              <div style={{display:"flex",gap:8,marginBottom:10}}>
-                <input
-                  value={quickText}
-                  onChange={e=>{setQuickText(e.target.value); setPreview(null);}}
-                  onKeyDown={e=>e.key==="Enter"&&handleQuickPreview()}
-                  placeholder='e.g. "2 bottles milk upstairs fridge expires June 20"'
-                  style={{flex:1,padding:"12px 14px",fontSize:14,borderRadius:12}}
-                />
-                <button className="btn pill" onClick={handleQuickPreview} style={{padding:"12px 18px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:14,fontWeight:600,whiteSpace:"nowrap",boxShadow:"0 4px 20px #7C6AF740"}}>
-                  Parse →
-                </button>
-              </div>
+              <textarea
+                value={quickText}
+                onChange={e=>{setQuickText(e.target.value); setPreviews([]);}}
+                placeholder={"One item:\n\"2 bottles milk upstairs fridge expires June 20\"\n\nMultiple items (separate by comma or new line):\n\"chicken 1kg downstairs freezer, 3 yogurts upstairs fridge, paprika pantry\""}
+                rows={4}
+                style={{width:"100%",padding:"12px 14px",fontSize:13,borderRadius:12,resize:"vertical",lineHeight:1.6,marginBottom:10}}
+              />
+              <button className="btn pill" onClick={handleQuickPreview} style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:14,fontWeight:600,boxShadow:"0 4px 20px #7C6AF740"}}>
+                Parse Items →
+              </button>
 
-              {/* Preview card */}
-              {preview && (
-                <div style={{background:"#0E0E1A",borderRadius:14,padding:16,marginTop:4,border:"1px solid #2A2A4A"}}>
-                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"1px",color:"#4040A0",textTransform:"uppercase",marginBottom:10}}>Detected — does this look right?</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
-                    {[
-                      {l:"Name",    v:preview.name||"—"},
-                      {l:"Qty",     v:`${preview.qty} ${preview.unit}`},
-                      {l:"Location",v:getLoc(preview.loc).label},
-                      {l:"Category",v:getCat(preview.cat).label+" "+getCat(preview.cat).icon},
-                      {l:"Expires", v:preview.expires?fmtDate(preview.expires):"Not set"},
-                    ].map(r=>(
-                      <div key={r.l}>
-                        <div style={{fontSize:10,color:"#3A3A60",fontWeight:600,textTransform:"uppercase",letterSpacing:".8px"}}>{r.l}</div>
-                        <div style={{fontSize:14,color:"#C0C0FF",fontWeight:500,marginTop:2}}>{r.v}</div>
+              {/* Multi-item preview */}
+              {previews.length>0&&(
+                <div style={{marginTop:14}}>
+                  <div style={{fontSize:11,fontWeight:700,letterSpacing:"1px",color:"#4040A0",textTransform:"uppercase",marginBottom:10}}>
+                    {previews.length} item{previews.length>1?"s":""} detected — check & confirm
+                  </div>
+                  <div style={{display:"flex",flexDirection:"column",gap:8,marginBottom:12}}>
+                    {previews.map((p,idx)=>(
+                      <div key={idx} style={{background:"#0E0E1A",borderRadius:14,padding:"12px 14px",border:"1px solid #2A2A4A",display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
+                        <span style={{fontSize:20}}>{getCat(p.cat).icon}</span>
+                        <input
+                          value={p.name}
+                          onChange={e=>updatePreview(idx,"name",e.target.value)}
+                          style={{flex:1,minWidth:100,padding:"6px 10px",fontSize:13,borderRadius:8}}
+                          placeholder="Name"
+                        />
+                        <input
+                          type="number" min="0" step="0.1"
+                          value={p.qty}
+                          onChange={e=>updatePreview(idx,"qty",parseFloat(e.target.value)||1)}
+                          style={{width:60,padding:"6px 8px",fontSize:13,borderRadius:8}}
+                        />
+                        <select value={p.cat} onChange={e=>updatePreview(idx,"cat",e.target.value)} style={{padding:"6px 8px",fontSize:12,borderRadius:8}}>
+                          {CATEGORIES.map(c=><option key={c.id} value={c.id}>{c.icon} {c.label}</option>)}
+                        </select>
+                        <select value={p.loc} onChange={e=>updatePreview(idx,"loc",e.target.value)} style={{padding:"6px 8px",fontSize:12,borderRadius:8}}>
+                          {LOCATIONS.map(l=><option key={l.id} value={l.id}>{l.icon} {l.label}</option>)}
+                        </select>
+                        <button className="btn" onClick={()=>setPreviews(prev=>prev.filter((_,i)=>i!==idx))} style={{padding:"4px 8px",background:"#2A0A0A",color:"#FF4D4D",borderRadius:8,fontSize:12,border:"1px solid #4A1A1A"}}>✕</button>
                       </div>
                     ))}
                   </div>
-                  <div style={{display:"flex",gap:8}}>
-                    <button className="btn pill" onClick={()=>{setForm({...preview});setEditing(null);setPreview(null);setQuickText("");setTab("add");}} style={{flex:1,padding:"10px",background:"#1A1A2E",color:"#7C6AF7",border:"1px solid #2A2A5A",fontSize:13,fontWeight:600}}>
-                      ✏️ Edit first
-                    </button>
-                    <button className="btn pill" onClick={confirmQuickAdd} style={{flex:2,padding:"10px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:13,fontWeight:700,boxShadow:"0 4px 16px #7C6AF740"}}>
-                      ✓ Add to Inventory
-                    </button>
-                  </div>
+                  <button className="btn pill" onClick={confirmQuickAdd} style={{width:"100%",padding:"12px",background:"linear-gradient(135deg,#7C6AF7,#5BB8FF)",color:"white",fontSize:14,fontWeight:700,boxShadow:"0 4px 16px #7C6AF740"}}>
+                    ✓ Add {previews.length} Item{previews.length>1?"s":""} to Inventory
+                  </button>
                 </div>
               )}
 
               <div style={{marginTop:12,fontSize:11,color:"#2A2A50",lineHeight:1.6}}>
-                💡 Tips: include quantity · location (upstairs/downstairs fridge or freezer) · expiry date
+                💡 Separate multiple items with a comma or new line
               </div>
             </div>
 
@@ -389,7 +403,6 @@ export default function App() {
               )}
             </div>
             <div style={{fontSize:11,color:"#3A3A60",marginBottom:10,fontFamily:"'DM Mono',monospace"}}>{visible.length} items</div>
-
             {visible.length===0?(
               <div className="card" style={{padding:40,textAlign:"center",color:"#3A3A60"}}>
                 <div style={{fontSize:36,marginBottom:8}}>🔍</div>
@@ -445,7 +458,7 @@ export default function App() {
                       {expired.map(item=>{
                         const cat=getCat(item.cat); const loc=getLoc(item.loc);
                         return(
-                          <div key={item.id} className="card" style={{padding:"14px 16px",display:"flex",alignItems:"center",gap:12,borderColor:"#FF4D4D33"}}>
+                          <div key={item.id} className="card" style={{padding:"14px 16px",display:"flex",alignItems:"center",gap:12}}>
                             <span style={{fontSize:22}}>{cat.icon}</span>
                             <div style={{flex:1}}>
                               <div style={{fontWeight:600,color:"#FF4D4D"}}>{item.name}</div>
